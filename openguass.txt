@@ -1,0 +1,90 @@
+SELECT COUNT(*) FROM test_data WHERE is_active = TRUE;
+SELECT COUNT(*) FROM test_data WHERE category = 'Sports';
+EXPLAIN ANALYZE SELECT AVG(price) FROM test_data WHERE category = 'Sports';
+
+CREATE USER test_user WITH PASSWORD '12345678abc@';
+CREATE ROLE read_only_role;
+GRANT CONNECT ON DATABASE project3 TO read_only_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO read_only_role;
+GRANT read_only_role TO test_user;
+
+
+
+CREATE TABLE device_data (
+    device_id SERIAL PRIMARY KEY,
+    device_name TEXT NOT NULL,
+    device_type TEXT NOT NULL,
+    storage_location TEXT NOT NULL,
+    manufacture_date DATE NOT NULL
+);
+
+
+
+INSERT INTO device_data (device_name, device_type, storage_location, manufacture_date)
+SELECT
+    'Device_' || i,
+    CASE WHEN i % 3 = 0 THEN 'Type_A'
+         WHEN i % 3 = 1 THEN 'Type_B'
+         ELSE 'Type_C' END,
+    'Location_' || (i % 5),
+    CURRENT_DATE - (i % 100) * INTERVAL '1 day'
+FROM generate_series(1, 100) AS i;
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+
+UPDATE device_data
+SET
+    device_name =gs_encrypt_aes128(device_name, 'Encrypt#123'),
+    device_type = gs_encrypt_aes128(device_type, 'Encrypt#123'),
+    storage_location = gs_encrypt_aes128(storage_location, 'Encrypt#123');
+
+
+
+-- 创建一个包含可能密钥的密钥表
+CREATE TEMP TABLE possible_keys (
+    key TEXT
+);
+
+
+INSERT INTO possible_keys (key) VALUES
+    ('TestKey123'),
+    ('Encrypt#123'),
+    ('AnotherKey456'),
+    ('WrongKey789');
+
+-- 遍历加密数据尝试解密
+DO $$
+DECLARE
+    encrypted_device_name TEXT; -- 加密后的字段
+    decrypted_device_name TEXT; -- 解密后的字段
+    current_key TEXT;           -- 当前尝试的密钥
+BEGIN
+
+    FOR encrypted_device_name IN SELECT device_name FROM device_data LOOP
+
+        FOR current_key IN SELECT key FROM possible_keys LOOP
+            BEGIN
+
+                decrypted_device_name := gs_decrypt_aes128(encrypted_device_name, current_key);
+
+                RAISE NOTICE '尝试密钥: %, 解密结果: %', current_key, COALESCE(decrypted_device_name, '解密失败');
+            EXCEPTION
+                WHEN others THEN
+                    -- 捕获错误信息，表示当前密钥无法解密
+                    RAISE NOTICE '密钥 % 解密失败，错误: %', current_key, SQLERRM;
+            END;
+        END LOOP;
+    END LOOP;
+END $$;
+
+CREATE TABLE orders (
+    order_id SERIAL,
+    customer_id INT NOT NULL,
+    order_date DATE NOT NULL,
+    order_amount NUMERIC NOT NULL,
+    region TEXT,
+    PRIMARY KEY (order_id, order_date)
+) PARTITION BY RANGE (order_date);
+
+show shared_buffers;

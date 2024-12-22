@@ -1,0 +1,118 @@
+SELECT COUNT(*) FROM test_data WHERE is_active = TRUE;
+SELECT COUNT(*) FROM test_data WHERE category = 'Sports';
+
+SELECT AVG(c6) FROM test_data_2 WHERE c5 = 'Sports';
+
+
+
+CREATE USER test_user WITH PASSWORD '12345';
+CREATE ROLE read_only_role;
+GRANT CONNECT ON DATABASE project3 TO read_only_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO read_only_role;
+GRANT read_only_role TO test_user;
+
+
+SELECT * FROM test_data;  -- 应该成功
+INSERT INTO test_data VALUES (0, 'test');
+-- 应该失败
+
+
+CREATE TABLE device_data (
+    device_id SERIAL PRIMARY KEY,    
+    device_name TEXT NOT NULL,        
+    device_type TEXT NOT NULL,       
+    storage_location TEXT NOT NULL,   
+    manufacture_date DATE NOT NULL  
+);
+
+
+INSERT INTO device_data (device_name, device_type, storage_location, manufacture_date)
+SELECT
+    'Device_' || i,
+    CASE WHEN i % 3 = 0 THEN 'Type_A'
+         WHEN i % 3 = 1 THEN 'Type_B'
+         ELSE 'Type_C' END,
+    'Location_' || (i % 5),
+    CURRENT_DATE - (i % 100) * INTERVAL '1 day'
+FROM generate_series(1, 100) AS i;
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 对敏感数据进行加密
+UPDATE device_data
+SET
+    device_name = pgp_sym_encrypt(device_name, 'Encrypt#123'),
+    device_type = pgp_sym_encrypt(device_type, 'Encrypt#123'),
+    storage_location = pgp_sym_encrypt(storage_location, 'Encrypt#123');
+
+
+
+
+
+-- 创建一个包含可能密钥的密钥表
+CREATE TEMP TABLE possible_keys (
+    key TEXT
+);
+
+-- 插入一些可能的密钥用于测试
+INSERT INTO possible_keys (key) VALUES
+    ('TestKey123'),
+    ('Encrypt#123'),
+    ('AnotherKey456'),
+    ('WrongKey789');
+
+-- 遍历加密数据尝试解密
+DO $$
+DECLARE
+    encrypted_device_name TEXT; 
+    decrypted_device_name TEXT;
+    current_key TEXT;          
+BEGIN
+    --
+    FOR encrypted_device_name IN SELECT device_name FROM device_data LOOP
+   
+        FOR current_key IN SELECT key FROM possible_keys LOOP
+            BEGIN
+      
+                decrypted_device_name := pgp_sym_encrypt(encrypted_device_name, current_key);
+
+   
+                RAISE NOTICE '尝试密钥: %, 解密结果: %', current_key, COALESCE(decrypted_device_name, '解密失败');
+            EXCEPTION
+                WHEN others THEN
+               
+                    RAISE NOTICE '密钥 % 解密失败，错误: %', current_key, SQLERRM;
+            END;
+        END LOOP;
+    END LOOP;
+END $$;
+
+
+
+
+CREATE TABLE orders (
+    order_id SERIAL,
+    customer_id INT NOT NULL,
+    order_date DATE NOT NULL,
+    order_amount NUMERIC NOT NULL,
+    region TEXT,
+    PRIMARY KEY (order_id, order_date)
+) PARTITION BY RANGE (order_date);
+
+CREATE TABLE orders_2023 PARTITION OF orders
+FOR VALUES FROM ('2023-01-01') TO ('2024-01-01');
+
+CREATE TABLE orders_2024 PARTITION OF orders
+FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+INSERT INTO orders (customer_id, order_date, order_amount, region)
+SELECT i, '2023-06-01'::DATE + (i % 100), i * 100, 'Region_' || (i % 5)
+FROM generate_series(1, 1000000) i;
+
+
+CREATE TABLE orders_2025 PARTITION OF orders
+FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+
+SELECT * FROM orders WHERE order_date BETWEEN '2023-06-01' AND '2023-06-30';
+
+show shared_buffers;
